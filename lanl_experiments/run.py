@@ -210,18 +210,20 @@ if __name__ == '__main__':
     dfs = pd.concat(dfs, axis=0)
 
     for m in dfs['Model'].unique():
+        # Save results for the model
         df = dfs[dfs['Model'] == m]
+        f.write(m + '\n')
 
+        # Save full model
+        full = df.to_csv(index=False, header=False)
+        full = full.replace(',', ', ')
+        f.write(full + '\n')
+
+        # Save compressed
         compressed = pd.DataFrame(
             [df.mean(), df.sem()],
             index=['mean', 'stderr']
         ).to_csv().replace(',', '\t') # For easier copying into Excel
-
-        full = df.to_csv(index=False, header=False)
-        full = full.replace(',', ', ')
-
-        f.write(m + '\n')
         f.write(str(compressed) + '\n')
-        f.write(full + '\n')
 
     f.close()
