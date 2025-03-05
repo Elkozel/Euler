@@ -221,9 +221,9 @@ if __name__ == '__main__':
 
         # Save compressed
         compressed = pd.DataFrame(
-            [df.mean(), df.sem()],
+            [df.select_dtypes(include='number').mean(), df.select_dtypes(include='number').sem()],
             index=['mean', 'stderr']
-        ).to_csv().replace(',', '\t') # For easier copying into Excel
+        ).to_csv().replace(',', '\t')  # For easier copying into Excel
         f.write(str(compressed) + '\n')
 
     f.close()
