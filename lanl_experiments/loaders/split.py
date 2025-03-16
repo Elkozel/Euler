@@ -10,9 +10,9 @@ from tqdm import tqdm
 # Please obtain the LANL data set from:
 # https://csr.lanl.gov/data/cyber1/
 
-RED = '' # Location of redteam.txt
-SRC = '' # Location of auth.txt
-DST = '' # Directory to save output files to
+RED = '/data/LANL/redteam.txt' # Location of redteam.txt
+SRC = '/data/LANL/auth.txt' # Location of auth.txt
+DST = '/data/LANL/split/' # Directory to save output files to
 
 assert RED and SRC and DST, 'Please download the LANL data set, and mark in the code where it is:\nLines 13-15 of /lanl_experiments/loaders/split.py'
 
