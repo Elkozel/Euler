@@ -8,3 +8,4 @@ joblib
 scikit-learn
 scipy
 matplotlib
+tqdm
