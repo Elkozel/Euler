@@ -4,7 +4,7 @@ import os
 import pandas as pd
 
 import loaders.load_lanl as lanl
-import lanl_experiments.loaders.load_uwf22 as uwf22
+import loaders.load_uwf22 as uwf22
 from models.recurrent import GRU, LSTM, EmptyModel
 from models.embedders import \
     detector_gcn_rref, detector_gat_rref, detector_sage_rref, \
@@ -143,9 +143,9 @@ def get_args():
     elif args.dataset == "UWF22":
         args.loader = uwf22.load_uwf22_dist
         args.tr_start = 0
-        args.tr_end = uwf22.DATE_OF_EVIL_LANL
+        args.tr_end = lanl.DATE_OF_EVIL_LANL
         args.val_times = None # Computed later
-        args.te_times = [(args.tr_end, uwf22.TIMES['all'])]
+        args.te_times = [(args.tr_end, lanl.TIMES['all'])]
         args.delta = int(args.delta * (60**2))
         args.manual = False         
     else:

@@ -10,10 +10,28 @@ import torch
 from torch_geometric.data import Data 
 from tqdm import tqdm
 
-from .elastic_helpers import generate_node_map, get_all_records, make_fielddata 
+from .elastic_helpers import ElasticDataFetcher, generate_node_map, make_fielddata 
 
 from .tdata import TData
 from .load_utils import edge_tv_split, std_edge_w, standardized
+
+# We want to go from Dec 17, 2021 08:00 (1639724400)
+# Till Feb 19, 2022 21:00 (1645300800), which is a difference of 5576400 seconds
+# Dates are in standard UNIX format:
+DATE_OFFSET = 1639724400
+DATE_START = DATE_OFFSET
+DATE_END = DATE_START + 5576400
+
+DATE_OF_EVIL_UWF22 = 150885
+FILE_DELTA = 10000
+
+
+TIMES = {
+    20      : 254429, # First 20 anoms
+    100     : 823578, # First 100 anoms
+    500     : 1212490, # First 500 anoms
+    'all'  : 5576400  # Full
+}
 
 def empty_uwf22(nodemap):
     return make_data_obj([],None,None, nodemap)
@@ -46,17 +64,14 @@ def make_data_obj(eis, ys, ew_fn, nodemap, ews=None, **kwargs):
         eis_t, x, ys, masks, ews=ews, cnt=cnt, node_map=nodemap
     )
 
-# We want to go from Dec 17, 2021 08:00 (1639724400)
-# Till Feb 19, 2022 21:00 (1645300800), which is a difference of 5576400 seconds
-DATE_OFFSET = 1639724400
-def load_uwf22_dist(workers, start=0, end=5576400, delta=10000, is_test=False, ew_fn=std_edge_w):
+def load_uwf22_dist(workers, start=0, end=DATE_END-DATE_START, delta=10000, is_test=False, ew_fn=std_edge_w):
     if start == None or end == None:
         return empty_uwf22()
 
     num_slices = ((end - start) // delta)
     remainder = (end-start) % delta
     num_slices = num_slices + 1 if remainder else num_slices
-    workers = min(num_slices, workers)
+    workers = 1 # min(num_slices, workers)
 
     # Can't distribute the job if not enough workers
     if workers <= 1:
@@ -87,7 +102,7 @@ def load_uwf22_dist(workers, start=0, end=5576400, delta=10000, is_test=False, e
     
     # Now start the jobs in parallel 
     datas = Parallel(n_jobs=workers, prefer='processes')(
-        delayed(load_partial_uwf22)(i, kwargs[i]) for i in range(workers)
+        delayed(load_partial_uwf22_job)(i, kwargs[i]) for i in range(workers)
     )
 
     # Helper method to concatonate one field from all of the datas
@@ -133,9 +148,9 @@ def process_pandas_data(data, is_test=False):
             edges_t[et] = (is_anom, 1)
 
     for _, row in data.iterrows():
-        src = row["src_ip_zeek"]
-        dst = row["dest_ip_zeek"]
-        label = row["label_tactic"] if is_test else 0
+        src = int(row["src_ip_zeek"])
+        dst = int(row["dest_ip_zeek"])
+        label = int(row["label_tactic"] if is_test else 0)
         et = (src, dst)
 
         # Skip self-loops
@@ -158,16 +173,15 @@ def process_pandas_data(data, is_test=False):
     ys = ys if is_test else None
     return edges, ews, ys
 
-def load_partial_uwf22(start=140000, end=156659, delta=8640, is_test=False, ew_fn=standardized):
+def load_partial_uwf22(start, end, delta, is_test, ew_fn):
     UWF22_INDEX = "uwf-zeekdata22"
-    es = Elasticsearch("https://localhost:9200", api_key="MGZGTDhaVUJHWEpfZm5CYVB1bXo6dXBxVk5ucF9Rc3F6dWh5RjVRVDQzUQ==", verify_certs=False)
+    es = Elasticsearch("https://localhost:9200", api_key="MGZGTDhaVUJHWEpfZm5CYVB1bXo6dXBxVk5ucF9Rc3F6dWh5RjVRVDQzUQ==", verify_certs=False, ssl_show_warn=False)
 
     make_fielddata(es, UWF22_INDEX, "src_ip_zeek")
     make_fielddata(es, UWF22_INDEX, "dest_ip_zeek")
 
-    src_nodemap = generate_node_map(es, UWF22_INDEX, "src_ip_zeek")
+    nodemap = generate_node_map(es, UWF22_INDEX, "src_ip_zeek")
     dest_nodemap = generate_node_map(es, UWF22_INDEX, "dest_ip_zeek")
-    nodemap = src_nodemap
 
     for node in dest_nodemap:
         if node not in nodemap:
@@ -185,8 +199,32 @@ def load_partial_uwf22(start=140000, end=156659, delta=8640, is_test=False, ew_f
             }
         }
     }
+    data_fetcher = ElasticDataFetcher(es, UWF22_INDEX, query)
+    data = pd.DataFrame(tqdm(data_fetcher, desc=f"Loading {from_date} to {to_date}"))
+    if data.empty:
+        print(f"No data found for the time range {from_date} to {to_date}.")
+    else:
+        # Drop the columns we don't need
+        data = data[["src_ip_zeek", "dest_ip_zeek", "label_tactic", "duration"]]
+        
 
-    data = pd.DataFrame(get_all_records(es, UWF22_INDEX, query))[["src_ip_zeek", "dest_ip_zeek", "label_tactic", "duration"]]
+        # TODO: Figure out why some IPs are not in the nodemap
+        data["src_ip_zeek"] = data["src_ip_zeek"].map(lambda x : nodemap.index(x) if x in nodemap else 1)
+        data["dest_ip_zeek"] = data["dest_ip_zeek"].map(lambda x : nodemap.index(x) if x in nodemap else 1)
+        label_map = {
+            "none": 0,
+            "Reconnaissance": 0,
+            "Discovery": 1,
+            "Credential Access": 1,
+            "Privilege Escalation": 1,
+            "Exfiltration": 1,
+            "Lateral Movement": 1,
+            "Resource Development": 1,
+            "Defense Evasion": 1,
+            "Initial Access": 1,
+            "Persistence": 1        
+        }
+        data["label_tactic"] = data["label_tactic"].map(label_map)
 
     # Process the pandas DataFrame to extract edges, weights, and labels
     edges, ews, ys = process_pandas_data(data, is_test=is_test)

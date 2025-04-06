@@ -1,41 +1,63 @@
-def get_all_records(es, index_name, query, pagination=10000):
+# Elasticsearch complains about the connection not being secure
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+class ElasticDataFetcher():
     """
-    Retrieves all records from an Elasticsearch index that match a given query, using pagination.
+    A generator-like class that retrieves all records from an Elasticsearch index
+    and supports the len() function to get the total number of matching records.
 
     Args:
         es (Elasticsearch): The Elasticsearch client instance.
         index_name (str): The name of the Elasticsearch index.
         query (dict): The query to filter records.
         pagination (int, optional): The number of records to fetch per request. Defaults to 10000.
-
-    Yields:
-        dict: The source of each record retrieved from the index.
     """
-    search_after = None  # Used for pagination to fetch the next set of records.
+    def __init__(self, es, index_name, query, pagination=10000):
+        self.es = es
+        self.index_name = index_name
+        self.query = query
+        self.pagination = pagination
+        self.matchcount = None # The count of matching records
+        self._total_count = None  # Cache the total count of matching records
 
-    while True:
-        # Perform a search request with pagination and sorting.
-        resp = es.search(
-            index=index_name,
-            query=query,
-            size=pagination,
-            search_after=search_after,
-            sort=[
-                {"datetime": "asc"},  # Sort by datetime in ascending order.
-                {"__id": "asc"}       # Secondary sort by __id in ascending order.
-            ],
-        )
+    def __iter__(self):
+        search_after = None  # Used for pagination to fetch the next set of records.
 
-        # If no records are returned, exit the loop.
-        if len(resp.body["hits"]["hits"]) == 0:
-            return
+        while True:
+            # Perform a search request with pagination and sorting.
+            resp = self.es.search(
+                index=self.index_name,
+                query=self.query,
+                size=self.pagination,
+                search_after=search_after,
+                sort=[
+                    {"datetime": "asc"},  # Sort by datetime in ascending order.
+                    {"__id": "asc"}       # Secondary sort by __id in ascending order.
+                ],
+            )
 
-        # Update the search_after value for the next request.
-        search_after = resp.body["hits"]["hits"][-1]["sort"]
+            # If no records are returned, exit the loop.
+            if len(resp.body["hits"]["hits"]) == 0:
+                return
 
-        # Yield each record's source data.
-        for record in resp.body["hits"]["hits"]:
-            yield record["_source"]
+            # Update the search_after value for the next request.
+            search_after = resp.body["hits"]["hits"][-1]["sort"]
+
+            # Yield each record's source data.
+            for record in resp.body["hits"]["hits"]:
+                yield record["_source"]
+    
+    def __len__(self):
+        # Fetch the length if not previously fetched
+        if self.matchcount == None:
+            resp = self.es.count(
+                index=self.index_name,
+                query=self.query
+            )
+            self.matchcount = resp.body["count"]
+        
+        return self.matchcount
 
 def generate_node_map(es, index, field, query=None):
     """
